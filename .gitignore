@@ -18,6 +18,6 @@ __pycache__
 *.wts
 *.cache
 samples/python/automl-master
-output
+output*
 samples/python/retinaface/opencv3410/*
 

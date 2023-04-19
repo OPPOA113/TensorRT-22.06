@@ -87,6 +87,7 @@ def map(
     # Directories
     # save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     save_dir = project
+    print(f"save_dir:{save_dir},project:{project}")
     if not os.path.exists(txtpath):
         os.mkdir(txtpath)
     # (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
@@ -222,7 +223,9 @@ def run(
 ):
     
     source = str(source)
-    save_img = not nosave and not source.endswith('.txt')  # save inference images
+    print(f"source:{source}")
+    # save_img = not nosave and not source.endswith('.txt')  # save inference images
+    save_img=True
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
     webcam = source.isnumeric() or source.endswith('.txt') or (is_url and not is_file)
@@ -232,12 +235,14 @@ def run(
     # Directories
     # save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     save_dir = project
+    print(f"save_dir:{save_dir},project:{project}")
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
     # (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
     # Load model
     device = select_device(device)
+    print("--------half:",half, "type(imgsz):",type(imgsz))
     model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
     print("--------imgsz:",imgsz, "type(imgsz):",type(imgsz))
@@ -331,6 +336,7 @@ def run(
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
+            print(f"dataset.mode:{dataset.mode},save_path:{save_path},save_img:{save_img}")
             if save_img:
                 if dataset.mode == 'image':
                     cv2.imwrite(save_path, im0)

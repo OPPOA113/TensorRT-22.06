@@ -149,8 +149,8 @@ if __name__ == "__main__":
                         help="The amount of top classes and scores to output per image, default: 1")
     parser.add_argument("-s", "--separator", default="\t",
                         help="Separator to use between columns when printing the results, default: \\t")
-    parser.add_argument("-p", "--preprocessor", default="V2", choices=["V1", "V1MS", "V2"],
-                        help="Select the image preprocessor to use, either 'V2', 'V1' or 'V1MS', default: V2")
+    parser.add_argument("-p", "--preprocessor", default="resnet",
+                        help="Select the image preprocessor to use, same with model name, , default: resnet")
     args = parser.parse_args()
     if not all([args.engine, args.input]):
         parser.print_help()

@@ -231,8 +231,8 @@ if __name__ == "__main__":
                         help="The maximum number of images to use for calibration, default: 25000")
     parser.add_argument("--calib_batch_size", default=8, type=int,
                         help="The batch size for the calibration process, default: 1")
-    parser.add_argument("--calib_preprocessor", default="RESNET", choices=["V1", "V1MS", "V2", "RESNET"],
-                        help="Set the calibration image preprocessor to use, either 'V2', 'V1' , 'V1MS' or 'RESNET', default: RESNET")
+    parser.add_argument("--calib_preprocessor", default="resnet",
+                        help="Set the calibration image preprocessor to use, same with model name, default: resnet")
     args = parser.parse_args()
     if not all([args.onnx, args.engine]):
         parser.print_help()

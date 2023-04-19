@@ -392,6 +392,7 @@ class DetectMultiBackend(nn.Module):
             for index in range(model.num_bindings):
                 name = model.get_binding_name(index)
                 dtype = trt.nptype(model.get_binding_dtype(index))
+                print(f"dtype:{dtype}")
                 if model.binding_is_input(index):
                     if -1 in tuple(model.get_binding_shape(index)):  # dynamic
                         dynamic = True
@@ -400,11 +401,14 @@ class DetectMultiBackend(nn.Module):
                         fp16 = True
                 shape = tuple(context.get_binding_shape(index))
                 im = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
+                print(f"index:{index},name:{name},im.dtype:{im.dtype},im.device:{im.device},model.binding_is_input(index):{model.binding_is_input(index)}")
+
                 bindings[name] = Binding(name, dtype, shape, im, int(im.data_ptr()))
             binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
            
             batch_size = bindings['images'].shape[0]  # if dynamic, this is instead max batch size
             # batch_size = bindings['input'].shape[0]
+            print("init done,self.dynamic:{}",dynamic)
             
         elif coreml:  # CoreML
             LOGGER.info(f'Loading {w} for CoreML inference...')
@@ -466,7 +470,7 @@ class DetectMultiBackend(nn.Module):
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16
-
+        # print(f"b:{b}, ch:{ch}, h:{h}, w:{w}, im.dtype:{im.dtype},im.device:{im.device},self.fp16:{self.fp16}")
         if self.pt:  # PyTorch
             y = self.model(im, augment=augment, visualize=visualize) if augment or visualize else self.model(im)
             if isinstance(y, tuple):
@@ -492,6 +496,7 @@ class DetectMultiBackend(nn.Module):
             s = self.bindings['images'].shape
             # s = self.bindings['input'].shape
             assert im.shape == s, f"input size {im.shape} {'>' if self.dynamic else 'not equal to'} max model size {s}"
+            # print(f"b:{b}, ch:{ch}, h:{h}, w:{w}, im.dtype:{im.dtype},im.device:{im.device}")
             self.binding_addrs['images'] = int(im.data_ptr())
             self.context.execute_v2(list(self.binding_addrs.values()))
             y = self.bindings['output'].data

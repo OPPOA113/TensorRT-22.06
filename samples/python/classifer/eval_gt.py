@@ -15,6 +15,7 @@
 # limitations under the License.
 #
 
+from ast import Store
 import os
 import sys
 import argparse
@@ -24,6 +25,44 @@ import numpy as np
 from infer import TensorRTInfer
 from image_batcher import ImageBatcher
 
+
+def test_benchmark(args):
+    """
+        python benchmark测试, fps结果比trtexec测的qps结果低:
+        model       python  trtexec
+        resnet50    1480.1  1635.05  
+    """
+    import pycuda.driver as cuda
+    import time
+
+    trt_infer_engine = TensorRTInfer(args.engine)
+
+    spec = trt_infer_engine.input_spec()
+    batch = np.random.rand(*spec[0]).astype(spec[1])
+    iterations = 10000
+    times = []
+    output = np.zeros(*trt_infer_engine.output_spec())
+    cuda.memcpy_htod(trt_infer_engine.inputs[0]['allocation'], np.ascontiguousarray(batch))
+    for i in range(100):  # GPU warmup iterations
+        # trt_infer_engine.infer_benchmark(batch, output)
+        trt_infer_engine.context.execute_v2(trt_infer_engine.allocations)
+    esp_time = 0
+    i=0
+    while esp_time < 15:  # loop 15s
+        start = time.time()
+        # trt_infer_engine.infer_benchmark(batch, output)
+        trt_infer_engine.context.execute_v2(trt_infer_engine.allocations)
+        ecpse = time.time() - start
+        esp_time+=ecpse
+        times.append(ecpse)
+        i+=1
+        print("Iteration {} {:.1}".format(i,esp_time), end="\r")
+    cuda.memcpy_dtoh(output, trt_infer_engine.outputs[0]['allocation'])
+    print("Benchmark results include time for H2D and D2H memory copies")
+    print("Average Latency: {:.3f} ms".format(
+        1000 * np.average(times)))
+    print("Average Throughput: {:.1f} fps".format(
+        trt_infer_engine.batch_size / np.average(times)))
 
 def main(args):
     annotations = {}
@@ -69,11 +108,18 @@ if __name__ == "__main__":
     parser.add_argument("-a", "--annotations", help="Set the file to use for classification ground truth annotations")
     parser.add_argument("-s", "--separator", default=" ",
                         help="Separator to use between columns when parsing the annotations file, default: ' ' (space)")
-    parser.add_argument("-p", "--preprocessor", default="RESNET", choices=["V1", "V1MS", "V2", "RESNET"],
-                        help="Select the image preprocessor to use, either 'V2', 'V1' , 'V1MS', 'RESNET', default: RESNET")
+    parser.add_argument("-p", "--preprocessor", default="resnet",
+                        help="Select the image preprocessor to use ,same with model name, , default: resnet")
+    parser.add_argument("--benchmark", action="store_true", default=False, help="is open benchmark test")                        
+    parser.add_argument("--topk", action="store_true", default=False, help="is calculate top k")                        
     args = parser.parse_args()
-    if not all([args.engine, args.input, args.annotations]):
-        parser.print_help()
-        print("\nThese arguments are required: --engine  --input and --annotations")
-        sys.exit(1)
-    main(args)
+    if args.topk:
+        if not all([args.engine, args.input, args.annotations]):
+            parser.print_help()
+            print("\nThese arguments are required: --engine  --input and --annotations")
+            sys.exit(1)
+        main(args)
+    if args.benchmark:
+        test_benchmark(args)
+
+    

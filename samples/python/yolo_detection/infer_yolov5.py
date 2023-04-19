@@ -15,6 +15,8 @@
 # limitations under the License.
 #
 
+from ast import Pass
+import imp
 import os
 import sys
 import time
@@ -461,6 +463,163 @@ def main(args):
     print()
     print("Finished Processing")
 
+# /////////////////////////////////////////////////////////////////////////////////////////////
+import torch.utils.data as data
+import glob
+import cv2
+# from yolov5.utils.augmentations import letterbox
+from collections import OrderedDict, namedtuple
+import logging
+
+def letterbox2(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+    # Resize and pad image while meeting stride-multiple constraints
+    shape = im.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    if not scaleup:  # only scale down, do not scale up (for better val mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+    elif scaleFill:  # stretch
+        dw, dh = 0.0, 0.0
+        new_unpad = (new_shape[1], new_shape[0])
+        ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+    return im, ratio, (dw, dh)
+
+
+class dataset_of_gs():
+    def __init__(self, img_dir, number_zoom, img_size) -> None:
+        super().__init__()
+        print(f"image dir:{img_dir}")
+        self.imageslist = glob.glob(img_dir + "/*.jpg") 
+        self.number_zoom = number_zoom
+        self.numbers = len(self.imageslist)
+        self.count = 0 
+        self.img_size = img_size
+    
+    def _processor(self, path):
+        self.count += 1
+        im0 = cv2.imread(path)  # BGR
+        assert im0 is not None, f'Image Not Found {path}'
+        s = f'image {self.count}/{self.numbers} {path}: '
+        print(s)
+        im = letterbox2(im0, (self.img_size, self.img_size), stride=32, auto=False)[0]  # padded resize
+        im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+        # im = np.ascontiguousarray(im)  # contiguous
+        # im = torch.from_numpy(im).to("cuda:0")
+        # im = im.half() #if model.fp16 else im.float()  # uint8 to fp16/32
+        # im = np.asarray(im,dtype=np.float)
+        # print(im.shape)
+        # if len(im.shape) == 3:
+        #     im = im[None]  # expand for batch dim
+        im = np.ascontiguousarray(im)  # contiguous
+        im = im / 255.0  # 0 - 255 to 0.0 - 1.0
+        return im
+
+
+    def __len__(self):
+        return  self.numbers * self.number_zoom
+
+    def __getitem__(self, index) :
+        index = index % self.numbers
+        return self._processor(self.imageslist[index])
+
+
+class DetectMultiBackend2():
+    def __init__(self, weights='yolov5s.engine', device=torch.device('cpu'), img_size=320, 
+                    fp16=False, fuse=True):
+        LOGGER = logging.getLogger("yolov5")
+        LOGGER.info(f'Loading {weights} for TensorRT inference...')
+        
+        logger = trt.Logger(trt.Logger.INFO)
+        self.device = device
+        if self.device.type == 'cpu':
+            self.device = torch.device('cuda:0')
+        Binding = namedtuple('Binding', ('name', 'dtype', 'shape', 'data', 'ptr'))
+
+        with open(weights, 'rb') as f, trt.Runtime(logger) as runtime:
+            model = runtime.deserialize_cuda_engine(f.read())
+        # self.cfx= cuda.Device(0).make_context()
+        self.context = model.create_execution_context()
+        self.bindings = OrderedDict()
+        self.fp16 = False  # default updated below
+        self.dynamic = False
+        for index in range(model.num_bindings):
+            name = model.get_binding_name(index)
+            dtype = trt.nptype(model.get_binding_dtype(index))
+            if model.binding_is_input(index):
+                # if -1 in tuple(model.get_binding_shape(index)):  # dynamic
+                #     self.dynamic = True
+                #     self.context.set_binding_shape(index, tuple(model.get_profile_shape(0, index)[2]))
+                if dtype == np.float16:
+                    self.fp16 = True
+            shape = tuple(self.context.get_binding_shape(index))
+            print(f"bindings index:{index}, name:{name},dtype:{dtype},shape:{shape},is_input:{model.binding_is_input(index)}")
+            im = torch.from_numpy(np.empty(shape, dtype=dtype)).to(self.device)
+            self.bindings[name] = Binding(name, dtype, shape, im, int(im.data_ptr()))
+        
+        self.binding_addrs = OrderedDict((n, d.ptr) for n, d in self.bindings.items())
+        self.batch_size = self.bindings['images'].shape[0]  # if dynamic, this is instead max batch size
+        # batch_size = bindings['input'].shape[0]
+        print("init done,self.dynamic:{}",self.dynamic)
+
+    def infer(self, im,  val=False):
+        
+        # b, ch, h, w = im.shape  # batch, channel, height, width
+        # if self.fp16 and im.dtype != torch.float16:
+        #     im = im.half()  # to FP16
+        #     print("im.dtype:{im.dtype}")
+        # print(f"b:{b}, ch:{ch}, h:{h}, w:{w}, im.dtype:{im.dtype},im.device:{im.device}")
+        # if self.dynamic and im.shape != self.bindings['images'].shape:
+        #     i_in, i_out = (self.model.get_binding_index(x) for x in ('images', 'output'))
+        #     self.context.set_binding_shape(i_in, im.shape)  # reshape if dynamic
+        #     self.bindings['images'] = self.bindings['images']._replace(shape=im.shape)
+        #     self.bindings['output'].data.resize_(tuple(self.context.get_binding_shape(i_out)))
+        s = self.bindings['images'].shape
+        # s = self.bindings['input'].shape
+        assert im.shape == s, f"input size {im.shape} {'>' if self.dynamic else 'not equal to'} max model size {s}"
+        self.binding_addrs['images'] = int(im.data_ptr())
+        # self.cfx.push()
+        self.context.execute_v2(list(self.binding_addrs.values()))
+        # self.cfx.pop()
+        y = self.bindings['output'].data
+        
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, device=self.device)
+        return (y, []) if val else y
+            
+
+
+
+def main_yolo_reposity(args):
+    device = torch.device("cuda:0")
+    model = DetectMultiBackend2(args.engine, device=device, img_size=args.img_size, fp16=True)
+
+    gsdata = dataset_of_gs(args.input, number_zoom=1, img_size=416)
+    # gs_data_loader = data.DataLoader(gsdata, batch_size=1, num_workers=1, pin_memory=True )
+    # for img in gs_data_loader:
+    for idx in range(len(gsdata)):
+        img = gsdata[idx]
+        print(f"1 - img.shape:{img.shape}, type:{type(img)}, img.device:{img.device}")
+        model.infer(img)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -468,6 +627,7 @@ if __name__ == "__main__":
                         help="The serialized TensorRT engine")
     parser.add_argument("-i", "--input", default="/workspace/project/dataset/benchmarch_data/detection/test",#None,#
                         help="Path to the image or directory to process")
+    parser.add_argument("--img_size", type=int, default=416,help="image input size for inference")
     parser.add_argument("-o", "--output", default="./output", #None,#
                         help="Directory where to save the visualization results")
     parser.add_argument("-l", "--labels", default="./labels_coco.txt",
@@ -484,4 +644,5 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--preprocessor", default="Yolo", choices=["EfficientDet", "Yolo"],
                         help="Select the image preprocessor to use, either 'Yolo', 'EfficientDet', default: Yolo")                        
     args = parser.parse_args()
-    main(args)
+    # main(args)
+    main_yolo_reposity(args)

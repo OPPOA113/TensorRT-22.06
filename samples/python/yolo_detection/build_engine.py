@@ -19,7 +19,6 @@ import os
 import sys
 import logging
 import argparse
-# from tkinter.messagebox import NO
 
 import numpy as np
 import tensorrt as trt
@@ -193,36 +192,6 @@ class EngineBuilder:
         for output in outputs:
             log.info("Output '{}' with shape {} and dtype {}".format(output.name, output.shape, output.dtype))
 
-    def set_mixed_precision(self):
-        """
-        Experimental precision mode.
-        Enable mixed-precision mode. When set, the layers defined here will be forced to FP16 to maximize
-        INT8 inference accuracy, while having minimal impact on latency.
-        """
-        self.config.set_flag(trt.BuilderFlag.STRICT_TYPES)
-
-        # All convolution operations in the first four blocks of the graph are pinned to FP16.
-        # These layers have been manually chosen as they give a good middle-point between int8 and fp16
-        # accuracy in COCO, while maintining almost the same latency as a normal int8 engine.
-        # To experiment with other datasets, or a different balance between accuracy/latency, you may
-        # add or remove blocks.
-        for i in range(self.network.num_layers):
-            layer = self.network.get_layer(i)
-            if layer.type == trt.LayerType.CONVOLUTION and any([
-                    # AutoML Layer Names:
-                    "/stem/" in layer.name,
-                    "/blocks_0/" in layer.name,
-                    "/blocks_1/" in layer.name,
-                    "/blocks_2/" in layer.name,
-                    # TFOD Layer Names:
-                    "/stem_conv2d/" in layer.name,
-                    "/stack_0/block_0/" in layer.name,
-                    "/stack_1/block_0/" in layer.name,
-                    "/stack_1/block_1/" in layer.name,
-                ]):
-                self.network.get_layer(i).precision = trt.DataType.HALF
-                log.info("Mixed-Precision Layer {} set to HALF STRICT data type".format(layer.name))
-
     def create_engine(self, engine_path, precision, calib_input=None, calib_cache=None, calib_num_images=5000,
                       calib_batch_size=8, preprocessor="Yolo", cal_open_type="IPL"):
         """
@@ -241,21 +210,23 @@ class EngineBuilder:
 
         inputs = [self.network.get_input(i) for i in range(self.network.num_inputs)]
 
-        if precision in ["fp16", "int8", "mixed"]:
+        if precision == "fp16":
             if not self.builder.platform_has_fast_fp16:
                 log.warning("FP16 is not supported natively on this platform/device")
-            self.config.set_flag(trt.BuilderFlag.FP16)
-        if precision in ["int8", "mixed"]:
+            else:
+                self.config.set_flag(trt.BuilderFlag.FP16)
+        if precision == "int8":
             if not self.builder.platform_has_fast_int8:
                 log.warning("INT8 is not supported natively on this platform/device")
-            self.config.set_flag(trt.BuilderFlag.INT8)
-            self.config.int8_calibrator = EngineCalibrator(calib_cache)
-            if calib_cache is None or not os.path.exists(calib_cache):
-                calib_shape = [calib_batch_size] + list(inputs[0].shape[1:])
-                calib_dtype = trt.nptype(inputs[0].dtype)
-                self.config.int8_calibrator.set_image_batcher(
-                    ImageBatcher(calib_input, calib_shape, calib_dtype, max_num_images=calib_num_images,
-                                 exact_batches=True, preprocessor=preprocessor,shuffle_files=True,open_type=cal_open_type))
+            else:
+                self.config.set_flag(trt.BuilderFlag.INT8)
+                self.config.int8_calibrator = EngineCalibrator(calib_cache)
+                if calib_cache is None or not os.path.exists(calib_cache):
+                    calib_shape = [calib_batch_size] + list(inputs[0].shape[1:])
+                    calib_dtype = trt.nptype(inputs[0].dtype)
+                    self.config.int8_calibrator.set_image_batcher(
+                        ImageBatcher(calib_input, calib_shape, calib_dtype, max_num_images=calib_num_images,
+                                    exact_batches=True, preprocessor=preprocessor,shuffle_files=True,open_type=cal_open_type))
 
         engine_bytes = None
         try:
@@ -273,8 +244,7 @@ class EngineBuilder:
 def main(args):
     builder = EngineBuilder(args.verbose, args.workspace)
     builder.create_network(args.onnx, args.batch_size, args.dynamic_batch_size)
-    if args.precision == "mixed" and args.preprocessor!="Yolo":     # yolo系列暂不支持混合精度
-        builder.set_mixed_precision()
+
     builder.create_engine(args.engine, args.precision, args.calib_input, args.calib_cache, args.calib_num_images,
                           args.calib_batch_size, args.preprocessor, args.pre_open_type)
 
@@ -301,12 +271,12 @@ if __name__ == "__main__":
                         help="The directory holding images to use for calibration")
     parser.add_argument("--calib_cache", default=None,
                         help="The file path for INT8 calibration cache to use, default: ./calibration.cache")
-    parser.add_argument("--calib_num_images", default=5000, type=int,
+    parser.add_argument("--calib_num_images", default=1000, type=int,
                         help="The maximum number of images to use for calibration, default: 5000")
-    parser.add_argument("--calib_batch_size", default=8, type=int,
+    parser.add_argument("--calib_batch_size", default=1, type=int,
                         help="The batch size for the calibration process, default: 8")
-    parser.add_argument("--preprocessor", default="Yolo", choices=["EfficientDet", "Yolo","Retina"],
-                        help="Select the image preprocessor to use, either 'Yolo','EfficientDet','Retina',"
+    parser.add_argument("--preprocessor", default="Yolo", choices=["Yolo","Retina"],
+                        help="Select the image preprocessor to use, either 'Yolo','Retina',"
                              "default: Yolo")
     parser.add_argument("--pre_open_type", default="IPL", choices=["IPL", "CV"],
                         help="Select the image open type in calibrator, either 'IPL', 'CV', default: IPL")                                                      

@@ -4,10 +4,10 @@ import os
 
 
 def main(args):
-    cur_path=os.path.dirname(os.getcwd())
+    cur_path=os.path.dirname(__file__)# os.getcwd()
     yolov5=os.path.join(cur_path,'yolov5')
     sys.path.insert(1,yolov5)
-    
+
     try:
         import export_onnx
     except ImportError:
@@ -15,7 +15,10 @@ def main(args):
         sys.exit(1)
     export_onnx.run(args.input,args.output,args.batch_size,args.input_size)
     print("saved onnx file in : {}".format(args.output))
-    
+
+def print_args(args):
+    print(args)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -29,4 +32,5 @@ if __name__ == "__main__":
         parser.print_help()
         print("\nThese arguments are required:  --input and --output")
         sys.exit(1)
+    print_args(args)
     main(args)

@@ -11,7 +11,7 @@
 
 import argparse
 import os
-
+import sys
 import thop
 import torch
 from thop import clever_format
@@ -19,7 +19,7 @@ from thop import clever_format
 parse = argparse.ArgumentParser(description="MAKE MODELS CLS FOR tensorrt")
 parse.add_argument("--model_library", type=str, default="torchvision", choices=["timm", "torchvision"])
 parse.add_argument("--model_name", type=str, default="resnet50")
-parse.add_argument("--save_dir", type=str, default=r"./torchvision_onnx/")
+parse.add_argument("--save_dir", type=str, default=r"./export_onnx/")
 parse.add_argument("--size", type=int, default=224)
 parse.add_argument("--batchsize", type=int, default=1)
 parse.add_argument(
@@ -45,7 +45,16 @@ class ModelHUb:
         self.convert_mode = opt.convert_mode
         self.num_class = 1000
         self.img = torch.randn(opt.batchsize, 3, opt.size, opt.size)
-        self.save_file = os.path.join(opt.save_dir, self.model_name +"_"+ str(opt.batchsize)+"_"+str(opt.size)+  "." + self.convert_mode)
+        if not os.path.exists(opt.pretrained_weights):
+            print(f"error not found file:{opt.pretrained_weights}")
+            sys.exit(-1)
+        if not os.path.exists(opt.save_dir):
+            os.makedirs(opt.save_dir)
+        # onnx named: resnet50-torchvision-1_3_224_224.onnx
+        self.save_file = os.path.join(opt.save_dir, self.model_name +"-"
+                                        + opt.model_library +"-"
+                                        + str(opt.batchsize)+"_"+ str(3)+"_"+ str(opt.size)+"_"+ str(opt.size)
+                                        +  "." + self.convert_mode)
         if opt.model_library == "timm":
             self.model = self._get_model_timm()
         else:
@@ -55,7 +64,7 @@ class ModelHUb:
 
     def get_model(self):
         if self.convert_mode == "onnx":
-            torch.onnx.export(self.model, self.img, self.save_file, input_names=["input"], opset_version=10)
+            torch.onnx.export(self.model, self.img, self.save_file, input_names=["input"],opset_version=10) 
         else:
             self.model(self.img)  # dry runs
             scripted_model = torch.jit.trace(self.model, self.img, strict=False)

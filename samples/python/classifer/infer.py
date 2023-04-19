@@ -77,7 +77,7 @@ class TensorRTInfer:
                 self.inputs.append(binding)
             else:
                 self.outputs.append(binding)
-
+        print(f"engine: {engine_path}, input shape:{self.inputs[0]['shape']}")
         assert self.batch_size > 0
         assert len(self.inputs) > 0
         assert len(self.outputs) > 0
@@ -123,6 +123,21 @@ class TensorRTInfer:
         top_scores = np.flip(np.sort(output, axis=1), axis=1)[:, 0:top]
 
         return classes, scores, [top_classes, top_scores]
+
+    def infer_benchmark(self, batch, output):
+        """
+        Execute inference on a batch of images. The images should already be batched and preprocessed, as prepared by
+        the ImageBatcher class. Memory copying to and from the GPU device will be performed here.
+        :param batch: A numpy array holding the image batch.
+        :param top: The number of classes to return as top_predicitons, in descending order by their score. By default,
+        setting to one will return the same as the maximum score class. Useful for Top-5 accuracy metrics in validation.
+        :return: Three items, as numpy arrays for each batch image: The maximum score class, the corresponding maximum
+        score, and a list of the top N classes and scores.
+        """
+        # Process I/O and execute the network
+        cuda.memcpy_htod(self.inputs[0]['allocation'], np.ascontiguousarray(batch))
+        self.context.execute_v2(self.allocations)
+        cuda.memcpy_dtoh(output, self.outputs[0]['allocation'])
 
 
 def main(args):

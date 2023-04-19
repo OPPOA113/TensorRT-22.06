@@ -27,7 +27,7 @@ class ImageBatcher:
     Creates batches of pre-processed images.
     """
 
-    def __init__(self, input, shape, dtype, max_num_images=None, exact_batches=False, preprocessor="V2"):
+    def __init__(self, input, shape, dtype, max_num_images=None, exact_batches=False, preprocessor="v2"):
         """
         :param input: The input directory to read images from.
         :param shape: The tensor shape of the batch to prepare, either in NCHW or NHWC format.
@@ -36,7 +36,7 @@ class ImageBatcher:
         :param exact_batches: This defines how to handle a number of images that is not an exact multiple of the batch
         size. If false, it will pad the final batch with zeros to reach the batch size. If true, it will *remove* the
         last few images in excess of a batch size multiple, to guarantee batches are exact (useful for calibration).
-        :param preprocessor: Set the preprocessor to use, V1 or V2, depending on which network is being used.
+        :param preprocessor: Set the preprocessor to use, v1 or v2, depending on which network is being used.
         """
         # Find images in the given input path
         input = os.path.realpath(input)
@@ -99,7 +99,13 @@ class ImageBatcher:
         self.image_index = 0
         self.batch_index = 0
 
-        self.preprocessor = preprocessor
+        self.preprocessor = preprocessor.lower()
+        self.res_serise=["cspnet","densenet","dlanet","efficientnet","efficientnet_v2","esnet","hrnet",
+                         "mnasnet","mobilenet_v1","mobilenet_v2","mobilenet_v3","pplcnet","pplcnet_v2","repvgg",
+                         "resnet","resnext","senet","shufflenet_v1","shufflenet_v2","vgg","vovnet","wide_resnet",
+                         "alexnet"
+                        ]
+        self.inception_serise=["inception_v3","inception_v4","xception"]
 
     def preprocess_image(self, image_path):
         """
@@ -129,7 +135,7 @@ class ImageBatcher:
 
         image = Image.open(image_path)
         image = image.convert(mode='RGB')
-        if self.preprocessor == "V2":
+        if self.preprocessor == "v2":
             # For EfficientNet V2: Bilinear Resize and [-1,+1] Normalization
             if self.height < 320:
                 # Padded crop only on smaller sizes
@@ -137,14 +143,14 @@ class ImageBatcher:
             image = image.resize((self.width, self.height), resample=Image.BILINEAR)
             image = np.asarray(image, dtype=self.dtype)
             image = (image - 128.0) / 128.0
-        elif self.preprocessor == "V1":
+        elif self.preprocessor == "v1":
             # For EfficientNet V1: Padded Crop, Bicubic Resize, and [0,1] Normalization
             # (Mean subtraction and Std Dev scaling will be part of the graph, so not done here)
             image = pad_crop(image)
             image = image.resize((self.width, self.height), resample=Image.BICUBIC)
             image = np.asarray(image, dtype=self.dtype)
             image = image / 255.0
-        elif self.preprocessor == "V1MS":
+        elif self.preprocessor == "v1ms":
             # For EfficientNet V1: Padded Crop, Bicubic Resize, and [0,1] Normalization
             # Mean subtraction and Std dev scaling are applied as a pre-processing step outside the graph.
             image = pad_crop(image)
@@ -152,14 +158,19 @@ class ImageBatcher:
             image = np.asarray(image, dtype=self.dtype)
             image = image - np.asarray([123.68, 116.28, 103.53])
             image = image / np.asarray([58.395, 57.120, 57.375])
-        elif self.preprocessor == "RESNET":
+        elif self.preprocessor in self.res_serise:
             # resnet系列网络的预处理
             image = image.resize((self.width, self.height), resample=Image.BILINEAR)
             image = np.asarray(image, dtype=self.dtype)
             image = image / 255.0
             image = image - np.asarray([0.485, 0.456, 0.406])
             image = image / np.asarray([0.229, 0.224, 0.225])
-
+        elif self.preprocessor in self.inception_serise:
+            image = image.resize((self.width, self.height), resample=Image.BILINEAR)
+            image = np.asarray(image, dtype=self.dtype)
+            image = image / 255.0
+            image = image - np.asarray([0.5, 0.5, 0.5])
+            image = image / np.asarray([0.5, 0.5, 0.5])
         else:
             print("Preprocessing method {} not supported".format(self.preprocessor))
             sys.exit(1)
